@@ -73,6 +73,10 @@ pub enum CmsisDapError {
     /// Error scanning IR lengths.
     InvalidIR,
 
+    /// Several CMSIS-DAP v1 HID devices match the selected probe, and they cannot be told apart on this platform.
+    #[cfg(feature = "cmsisdap_v1")]
+    AmbiguousHidDevice,
+
     /// The firmware on the probe is outdated, and not supported by probe-rs. The minimum supported firmware version is {0}.
     ProbeFirmwareOutdated(&'static str),
 }

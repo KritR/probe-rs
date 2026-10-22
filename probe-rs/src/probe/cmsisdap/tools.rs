@@ -165,15 +165,16 @@ fn get_cmsisdap_info(device: &DeviceInfo, list_both_versions: bool) -> Vec<Debug
                 false
             };
 
-            let info = DebugProbeInfo::new(
-                prod_str.to_string(),
-                device.vendor_id(),
-                device.product_id(),
-                sn_str.map(Into::into),
-                &CmsisDapFactory,
-                selected_interface,
+            let info = DebugProbeInfo {
+                identifier: prod_str.to_string(),
+                vendor_id: device.vendor_id(),
+                product_id: device.product_id(),
+                serial_number: sn_str.map(Into::into),
+                probe_factory: &CmsisDapFactory,
                 is_hid_interface,
-            );
+                interface: selected_interface,
+                usb_location: Some((device.bus_id().to_string(), device.device_address())),
+            };
 
             if is_hid_interface {
                 v1_ifaces.push(info);
@@ -470,7 +471,7 @@ pub fn open_device_from_selector(
                         #[cfg(feature = "cmsisdap_v1")]
                         {
                             // Otherwise, save as a potential CMSIS-DAP v1 HID device and continue.
-                            hid_device_info = Some(device_info);
+                            hid_device_info = Some((device_info, device));
                         }
                     }
                 }
@@ -505,29 +506,44 @@ pub fn open_device_from_selector(
             return Err(ProbeCreationError::NotFound);
         };
 
-        let mut device_list = hid_api.device_list();
+        let device_list = hid_api.device_list();
 
         // We have to filter manually so that we can check the correct HID interface number.
         // Using HidApi::open() will return the first device which matches PID and VID,
         // which is not always what we want.
-        let device_info = device_list
-            .find(|info| {
-                let mut device_match = info.vendor_id() == vid && info.product_id() == pid;
+        let mut candidates = device_list.filter(|info| {
+            let mut device_match = info.vendor_id() == vid && info.product_id() == pid;
 
-                if let Some(sn) = sn {
-                    device_match &= Some(sn) == info.serial_number();
-                }
+            if let Some(sn) = sn {
+                device_match &= Some(sn) == info.serial_number();
+            }
 
-                if let Some(hid_interface) = hid_device_info
+            if let Some(hid_interface) = hid_device_info
+                .as_ref()
+                .and_then(|(info, _)| info.interface.filter(|_| info.is_hid_interface))
+            {
+                device_match &= info.interface_number() == hid_interface as i32;
+            }
+
+            // A selector with a USB location names one device: open the HID device on it,
+            // not another probe with the same VID, PID and serial number.
+            if selector.usb_location.is_some() {
+                device_match &= hid_device_info
                     .as_ref()
-                    .and_then(|info| info.interface.filter(|_| info.is_hid_interface))
-                {
-                    device_match &= info.interface_number() == hid_interface as i32;
-                }
+                    .is_some_and(|(_, usb_device)| hid_is_on_usb_device(info, usb_device));
+            }
 
-                device_match
-            })
-            .ok_or(ProbeCreationError::NotFound)?;
+            device_match
+        });
+        let device_info = candidates.next().ok_or(ProbeCreationError::NotFound)?;
+        // The same interface on another device is another probe that could not be ruled out.
+        if selector.usb_location.is_some()
+            && candidates.any(|other| other.interface_number() == device_info.interface_number())
+        {
+            return Err(ProbeCreationError::ProbeSpecific(BoxedProbeError::from(
+                CmsisDapError::AmbiguousHidDevice,
+            )));
+        }
 
         let Ok(device) = device_info.open_device(&hid_api) else {
             return Err(ProbeCreationError::NotFound);
@@ -554,6 +570,33 @@ pub fn open_device_from_selector(
             }
         }
     }
+}
+
+/// Whether the HID device `hid` is an interface of `usb_device`: its hidraw node is found under the
+/// USB device in sysfs.
+#[cfg(all(feature = "cmsisdap_v1", target_os = "linux"))]
+fn hid_is_on_usb_device(hid: &hidapi::DeviceInfo, usb_device: &DeviceInfo) -> bool {
+    use std::path::Path;
+
+    // hidapi's path is the device node, `/dev/hidrawN`.
+    let Some(name) = hid
+        .path()
+        .to_str()
+        .ok()
+        .and_then(|path| Path::new(path).file_name())
+    else {
+        return false;
+    };
+    let hidraw = std::fs::canonicalize(Path::new("/sys/class/hidraw").join(name));
+    let usb = std::fs::canonicalize(usb_device.sysfs_path());
+    matches!((hidraw, usb), (Ok(hidraw), Ok(usb)) if hidraw.starts_with(&usb))
+}
+
+/// Whether the HID device `hid` is an interface of `usb_device`. This platform gives no way to
+/// tell, so every HID device is a candidate.
+#[cfg(all(feature = "cmsisdap_v1", not(target_os = "linux")))]
+fn hid_is_on_usb_device(_hid: &hidapi::DeviceInfo, _usb_device: &DeviceInfo) -> bool {
+    true
 }
 
 /// We recognise cmsis dap interfaces if they have string like "CMSIS-DAP"
