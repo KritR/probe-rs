@@ -27,7 +27,7 @@ pub struct GlasgowUsbDevice {
 
 impl GlasgowUsbDevice {
     pub fn new_from_selector(selector: &DebugProbeSelector) -> Result<Self, ProbeCreationError> {
-        if selector.vendor_id != VID_QIHW && selector.product_id != PID_GLASGOW {
+        if selector.vendor_id != VID_QIHW || selector.product_id != PID_GLASGOW {
             Err(ProbeCreationError::NotFound)?
         }
         let Some(serial) = selector.serial_number.as_ref() else {
