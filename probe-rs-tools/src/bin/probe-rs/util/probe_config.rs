@@ -144,7 +144,7 @@ impl ProbeConfigs {
                 selector.serial_number.is_some(),
                 selector.interface.is_some(),
             ),
-            DebugProbeSelector::UsbPort(_) => (true, false, false),
+            DebugProbeSelector::UsbPort(_) | DebugProbeSelector::Tcp(_) => (true, false, false),
         });
 
         let mut resolved = ProbeConfig::default();
@@ -187,8 +187,8 @@ impl<L: ProbeLister> ConfiguredLister<L> {
                 let mut usb = usb.clone();
                 if self.configs.needs_serial_number(&usb)
                     && let [info] = self.inner.list(Some(selector)).as_slice()
+                    && let ProbeTransport::Usb(info) = &info.transport
                 {
-                    let ProbeTransport::Usb(info) = &info.transport;
                     usb.serial_number = info.serial_number.clone();
                 }
                 DebugProbeSelector::Usb(usb)
@@ -197,6 +197,7 @@ impl<L: ProbeLister> ConfiguredLister<L> {
                 [info] => DebugProbeSelector::from(info),
                 _ => selector.clone(),
             },
+            DebugProbeSelector::Tcp(_) => selector.clone(),
         }
     }
 }

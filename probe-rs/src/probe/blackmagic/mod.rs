@@ -1566,7 +1566,9 @@ impl ProbeFactory for BlackMagicProbeFactory {
             let Some(info) = black_magic_debug_port_info(&port_description) else {
                 continue;
             };
-            let ProbeTransport::Usb(info) = info.transport;
+            let ProbeTransport::Usb(info) = info.transport else {
+                continue;
+            };
 
             if selector.serial_number.is_some() && selector.serial_number != info.serial_number {
                 tracing::trace!(

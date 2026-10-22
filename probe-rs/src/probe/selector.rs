@@ -17,6 +17,9 @@ use nusb::DeviceInfo;
 /// `usb-busid://BUS-PORT.PORT` selects the probe plugged into that USB port, as in
 /// `usb-busid://1-1.2`. See [`UsbPort`].
 ///
+/// `tcp://DRIVER@ADDRESS` selects a probe reached over TCP, as in `tcp://cmsis-dap@192.168.1.50`.
+/// See [`TcpAddress`].
+///
 /// If SERIALNUMBER exists (i.e. the selector contains a second color) and is empty,
 /// probe-rs will select probes that have no serial number, or where the serial number is empty.
 ///
@@ -51,6 +54,8 @@ pub enum DebugProbeSelector {
     Usb(UsbSelector),
     /// The USB probe plugged into this port.
     UsbPort(UsbPort),
+    /// A probe reached over TCP.
+    Tcp(TcpAddress),
 }
 
 impl DebugProbeSelector {
@@ -59,6 +64,7 @@ impl DebugProbeSelector {
         match self {
             DebugProbeSelector::Usb(selector) => selector.matches(info),
             DebugProbeSelector::UsbPort(port) => UsbPort::of(info).as_ref() == Some(port),
+            DebugProbeSelector::Tcp(_) => false,
         }
     }
 
@@ -67,8 +73,10 @@ impl DebugProbeSelector {
         match self {
             DebugProbeSelector::Usb(selector) => selector.matches_probe(info),
             DebugProbeSelector::UsbPort(port) => {
-                let ProbeTransport::Usb(info) = &info.transport;
-                info.usb_port.as_ref() == Some(port)
+                matches!(&info.transport, ProbeTransport::Usb(info) if info.usb_port.as_ref() == Some(port))
+            }
+            DebugProbeSelector::Tcp(address) => {
+                matches!(&info.transport, ProbeTransport::Tcp(info) if info == address)
             }
         }
     }
@@ -85,9 +93,26 @@ impl DebugProbeSelector {
             (DebugProbeSelector::UsbPort(port), DebugProbeSelector::UsbPort(probe)) => {
                 port == probe
             }
+            (DebugProbeSelector::Tcp(address), DebugProbeSelector::Tcp(probe)) => address == probe,
             // A port says nothing about the VID, PID or serial number.
             (DebugProbeSelector::Usb(_), DebugProbeSelector::UsbPort(_)) => false,
+            (DebugProbeSelector::Tcp(_), _) | (_, DebugProbeSelector::Tcp(_)) => false,
         }
+    }
+}
+
+/// A probe reached over TCP: the driver that speaks its protocol, and its address.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TcpAddress {
+    /// The name of the driver, as in `cmsis-dap`.
+    pub driver: String,
+    /// The address as the driver takes it, such as `host` or `host:port`.
+    pub address: String,
+}
+
+impl fmt::Display for TcpAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "tcp://{}@{}", self.driver, self.address)
     }
 }
 
@@ -223,7 +248,9 @@ impl UsbSelector {
 
     /// Check if the given probe info matches this selector.
     pub fn matches_probe(&self, info: &DebugProbeInfo) -> bool {
-        let ProbeTransport::Usb(info) = &info.transport;
+        let ProbeTransport::Usb(info) = &info.transport else {
+            return false;
+        };
         if self.usb_port.is_some() && info.usb_port != self.usb_port {
             return false;
         }
@@ -290,6 +317,17 @@ impl std::str::FromStr for DebugProbeSelector {
         let s = match s.split_once("://") {
             Some(("usb", rest)) => rest,
             Some(("usb-busid", port)) => return Ok(DebugProbeSelector::UsbPort(port.parse()?)),
+            Some(("tcp", address)) => {
+                return match address.split_once('@') {
+                    Some((driver, address)) if !driver.is_empty() && !address.is_empty() => {
+                        Ok(DebugProbeSelector::Tcp(TcpAddress {
+                            driver: driver.to_string(),
+                            address: address.to_string(),
+                        }))
+                    }
+                    _ => Err(DebugProbeSelectorParseError::Format),
+                };
+            }
             Some((scheme, _)) if !scheme.contains(':') => {
                 return Err(DebugProbeSelectorParseError::UnknownScheme(
                     scheme.to_string(),
@@ -330,27 +368,31 @@ impl std::str::FromStr for DebugProbeSelector {
 
 impl From<DebugProbeInfo> for DebugProbeSelector {
     fn from(selector: DebugProbeInfo) -> Self {
-        let ProbeTransport::Usb(selector) = selector.transport;
-        DebugProbeSelector::Usb(UsbSelector {
-            vendor_id: selector.vendor_id,
-            product_id: selector.product_id,
-            serial_number: selector.serial_number,
-            interface: selector.interface,
-            usb_port: selector.usb_port,
-        })
+        match selector.transport {
+            ProbeTransport::Usb(selector) => DebugProbeSelector::Usb(UsbSelector {
+                vendor_id: selector.vendor_id,
+                product_id: selector.product_id,
+                serial_number: selector.serial_number,
+                interface: selector.interface,
+                usb_port: selector.usb_port,
+            }),
+            ProbeTransport::Tcp(address) => DebugProbeSelector::Tcp(address),
+        }
     }
 }
 
 impl From<&DebugProbeInfo> for DebugProbeSelector {
     fn from(selector: &DebugProbeInfo) -> Self {
-        let ProbeTransport::Usb(selector) = &selector.transport;
-        DebugProbeSelector::Usb(UsbSelector {
-            vendor_id: selector.vendor_id,
-            product_id: selector.product_id,
-            serial_number: selector.serial_number.clone(),
-            interface: selector.interface,
-            usb_port: selector.usb_port.clone(),
-        })
+        match &selector.transport {
+            ProbeTransport::Usb(selector) => DebugProbeSelector::Usb(UsbSelector {
+                vendor_id: selector.vendor_id,
+                product_id: selector.product_id,
+                serial_number: selector.serial_number.clone(),
+                interface: selector.interface,
+                usb_port: selector.usb_port.clone(),
+            }),
+            ProbeTransport::Tcp(address) => DebugProbeSelector::Tcp(address.clone()),
+        }
     }
 }
 
@@ -365,6 +407,7 @@ impl fmt::Display for DebugProbeSelector {
         match self {
             DebugProbeSelector::Usb(selector) => selector.fmt(f),
             DebugProbeSelector::UsbPort(port) => write!(f, "usb-busid://{port}"),
+            DebugProbeSelector::Tcp(address) => address.fmt(f),
         }
     }
 }
@@ -410,13 +453,13 @@ pub enum DebugProbeSelectorParseError {
     /// The format of the selector is invalid. Please use a string in the form `VID:PID<-Interface>:<Serial>`, where Serial  and Interface are optional.
     Format,
 
-    /// Unknown probe selector scheme `{0}://`. The schemes are `usb://` and `usb-busid://`.
+    /// Unknown probe selector scheme `{0}://`. The schemes are `usb://`, `usb-busid://` and `tcp://`.
     UnknownScheme(String),
 }
 
 #[cfg(test)]
 mod test {
-    use crate::probe::{DebugProbeSelector, UsbPort, UsbSelector};
+    use crate::probe::{DebugProbeSelector, TcpAddress, UsbPort, UsbSelector};
 
     fn usb(selector: &str) -> UsbSelector {
         let Ok(DebugProbeSelector::Usb(selector)) = selector.parse() else {
@@ -557,10 +600,26 @@ mod test {
     }
 
     #[test]
+    fn tcp_names_the_driver_and_the_address() {
+        let selector: DebugProbeSelector = "tcp://cmsis-dap@[::1]:4441".parse().unwrap();
+        let address = TcpAddress {
+            driver: "cmsis-dap".to_string(),
+            address: "[::1]:4441".to_string(),
+        };
+        assert_eq!(selector, DebugProbeSelector::Tcp(address));
+        assert_eq!(selector.to_string(), "tcp://cmsis-dap@[::1]:4441");
+        assert!(
+            "tcp://localhost:4441"
+                .parse::<DebugProbeSelector>()
+                .is_err()
+        );
+    }
+
+    #[test]
     fn unknown_scheme_is_rejected() {
         assert!(matches!(
-            "tcp://localhost:4441".parse::<DebugProbeSelector>(),
-            Err(super::DebugProbeSelectorParseError::UnknownScheme(scheme)) if scheme == "tcp"
+            "serial:///dev/ttyACM0".parse::<DebugProbeSelector>(),
+            Err(super::DebugProbeSelectorParseError::UnknownScheme(scheme)) if scheme == "serial"
         ));
     }
 

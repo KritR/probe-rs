@@ -57,9 +57,13 @@ pub fn list_cmsisdap_devices() -> Vec<ProbeListItem> {
     if let Ok(api) = hidapi::HidApi::new() {
         for device in api.device_list() {
             if let Some(info) = get_cmsisdap_hid_info(device) {
-                let ProbeTransport::Usb(hid) = &info.transport;
+                let ProbeTransport::Usb(hid) = &info.transport else {
+                    continue;
+                };
                 if !probes.iter().any(|p| {
-                    let ProbeTransport::Usb(usb) = &p.info.transport;
+                    let ProbeTransport::Usb(usb) = &p.info.transport else {
+                        return false;
+                    };
                     usb.vendor_id == hid.vendor_id
                         && usb.product_id == hid.product_id
                         && usb.serial_number.as_deref().unwrap_or("")
@@ -462,7 +466,9 @@ pub fn open_device_from_selector(
                     && let Some(device_info) =
                         get_cmsisdap_info(&device, true).into_iter().find(|dpi| {
                             tracing::trace!("DebugProbeInfo: {:?}", dpi);
-                            let ProbeTransport::Usb(dpi) = &dpi.transport;
+                            let ProbeTransport::Usb(dpi) = &dpi.transport else {
+                                return false;
+                            };
                             // Only compare if the selector has an interface to compare to
                             selector.interface.is_none_or(|i| Some(i) == dpi.interface)
                         })
@@ -470,7 +476,9 @@ pub fn open_device_from_selector(
                     // If the VID, PID, and potentially SN all match,
                     // and the device is a valid CMSIS-DAP probe,
                     // attempt to open the device in v2 mode.
-                    let ProbeTransport::Usb(usb_info) = &device_info.transport;
+                    let ProbeTransport::Usb(usb_info) = &device_info.transport else {
+                        continue;
+                    };
                     if let Some(device) = open_v2_device(&device, usb_info.interface)? {
                         return Ok(device);
                     } else {
@@ -526,7 +534,9 @@ pub fn open_device_from_selector(
                 }
 
                 if let Some(hid_interface) = hid_device_info.as_ref().and_then(|info| {
-                    let ProbeTransport::Usb(info) = &info.transport;
+                    let ProbeTransport::Usb(info) = &info.transport else {
+                        return None;
+                    };
                     info.interface.filter(|_| info.is_hid_interface)
                 }) {
                     device_match &= info.interface_number() == hid_interface as i32;

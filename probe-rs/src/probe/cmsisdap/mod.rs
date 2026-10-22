@@ -115,13 +115,9 @@ impl ProbeFactory for CmsisDapFactory {
             return vec![crate::probe::list::ProbeListItem::accessible(
                 crate::probe::DebugProbeInfo {
                     identifier: "CMSIS-DAP TCP".to_string(),
-                    transport: crate::probe::ProbeTransport::Usb(crate::probe::UsbProbeInfo {
-                        vendor_id: tcp::TCP_VID,
-                        product_id: tcp::TCP_PID,
-                        serial_number: Some(address.to_string()),
-                        is_hid_interface: false,
-                        interface: None,
-                        usb_port: None,
+                    transport: crate::probe::ProbeTransport::Tcp(crate::probe::TcpAddress {
+                        driver: tcp::DRIVER.to_string(),
+                        address: address.to_string(),
                     }),
                     probe_factory: &Self,
                 },
@@ -136,16 +132,12 @@ impl ProbeFactory for CmsisDapFactory {
 
 /// The address of the TCP probe a selector names, if it names one.
 fn tcp_address(selector: &DebugProbeSelector) -> Option<&str> {
-    let DebugProbeSelector::Usb(selector) = selector else {
-        return None;
-    };
-    if selector.vendor_id != tcp::TCP_VID || selector.product_id != tcp::TCP_PID {
-        return None;
+    match selector {
+        DebugProbeSelector::Tcp(address) if address.driver == tcp::DRIVER => {
+            Some(address.address.as_str())
+        }
+        _ => None,
     }
-    selector
-        .serial_number
-        .as_deref()
-        .filter(|address| !address.is_empty())
 }
 
 /// A CMSIS-DAP probe.

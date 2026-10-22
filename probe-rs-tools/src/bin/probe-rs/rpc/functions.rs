@@ -223,16 +223,22 @@ impl LimitedLister {
     }
 
     fn is_allowed(&self, selector: &DebugProbeSelector) -> bool {
-        // A port does not say which probe it is; `open` finds it among the allowed probes.
-        let DebugProbeSelector::Usb(selector) = selector else {
-            return false;
+        let (sel_without_serial, sel_with_serial) = match selector {
+            DebugProbeSelector::Usb(selector) => {
+                // We aren't using `.to_string()` because it doesn't append an empty serial when
+                // missing.
+                let sel_without_serial =
+                    format!("{:04x}:{:04x}", selector.vendor_id, selector.product_id);
+                let mut sel_with_serial = format!("{sel_without_serial}:");
+                if let Some(sn) = selector.serial_number.as_deref() {
+                    sel_with_serial.push_str(sn);
+                }
+                (sel_without_serial, sel_with_serial)
+            }
+            DebugProbeSelector::Tcp(address) => (address.to_string(), address.to_string()),
+            // A port does not say which probe it is; `open` finds it among the allowed probes.
+            DebugProbeSelector::UsbPort(_) => return false,
         };
-        // We aren't using `.to_string()` because it doesn't append an empty serial when missing.
-        let sel_without_serial = format!("{:04x}:{:04x}", selector.vendor_id, selector.product_id);
-        let mut sel_with_serial = format!("{sel_without_serial}:");
-        if let Some(sn) = selector.serial_number.as_deref() {
-            sel_with_serial.push_str(sn);
-        }
 
         let matching = |s: &String| s == &sel_with_serial || s == &sel_without_serial;
 

@@ -54,7 +54,9 @@ impl ProbeLister for TestLister {
         )]
         let mut probes = self.probes.lock().unwrap();
         let probe_index = probes.iter().position(|(info, _)| {
-            let ProbeTransport::Usb(info) = &info.transport;
+            let ProbeTransport::Usb(info) = &info.transport else {
+                return false;
+            };
             info.product_id == selector.product_id
                 && info.vendor_id == selector.vendor_id
                 && info.serial_number == selector.serial_number

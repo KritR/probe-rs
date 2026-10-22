@@ -297,7 +297,9 @@ mod tests {
         let s = sel(&format!("0:0:{serial}"));
         let entries = LinuxGpiodFactory.list_probes_filtered(Some(&s));
         assert_eq!(entries.len(), 1);
-        let ProbeTransport::Usb(info) = &entries[0].info.transport;
+        let ProbeTransport::Usb(info) = &entries[0].info.transport else {
+            panic!("not a USB probe");
+        };
         assert_eq!(info.vendor_id, 0);
         assert_eq!(info.product_id, 0);
         assert_eq!(info.serial_number.as_deref(), Some(serial));

@@ -720,7 +720,9 @@ mod tests {
         let info = probe_info_for_path(Path::new("/dev/spidev_swd0"));
 
         assert_eq!(info.identifier, LINUX_SPIDEV_SWD_IDENTIFIER);
-        let ProbeTransport::Usb(info) = &info.transport;
+        let ProbeTransport::Usb(info) = &info.transport else {
+            panic!("not a USB probe");
+        };
         assert_eq!(info.serial_number.as_deref(), Some("/dev/spidev_swd0"));
         assert_eq!(info.interface, None);
     }
@@ -755,7 +757,9 @@ mod tests {
         let probes = LinuxSpidevSwdFactory.list_probes_filtered(Some(&selector));
 
         assert_eq!(probes.len(), 1);
-        let ProbeTransport::Usb(info) = &probes[0].info.transport;
+        let ProbeTransport::Usb(info) = &probes[0].info.transport else {
+            panic!("not a USB probe");
+        };
         assert_eq!(info.serial_number.as_deref(), Some("/dev/spidev0.0"));
     }
 

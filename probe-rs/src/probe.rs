@@ -53,7 +53,7 @@ pub use queue::{
 };
 #[allow(deprecated)]
 pub use queue::{DeferredResultIndex, DeferredResultSet, ErasedQueue, Queue};
-pub use selector::{DebugProbeSelector, UsbPort, UsbSelector};
+pub use selector::{DebugProbeSelector, TcpAddress, UsbPort, UsbSelector};
 pub use swd::{
     BitbangSwd, Direction, IoSequenceItem, Pins, Port, SwdBatch, SwdOp, SwdPort, SwdProbe,
     SwdSettings, SwdTransferError,
@@ -965,6 +965,8 @@ pub struct DebugProbeInfo {
 pub enum ProbeTransport {
     /// A USB probe.
     Usb(UsbProbeInfo),
+    /// A probe reached over TCP.
+    Tcp(TcpAddress),
 }
 
 /// A USB debug probe.
@@ -991,7 +993,16 @@ pub struct UsbProbeInfo {
 
 impl std::fmt::Display for DebugProbeInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let ProbeTransport::Usb(usb) = &self.transport;
+        let usb = match &self.transport {
+            ProbeTransport::Usb(usb) => usb,
+            ProbeTransport::Tcp(address) => {
+                return write!(
+                    f,
+                    "{} -- {address} ({})",
+                    self.identifier, self.probe_factory
+                );
+            }
+        };
         write!(
             f,
             "{} -- {:04x}:{:04x}",
